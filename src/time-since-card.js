@@ -99,14 +99,18 @@ export class TimeAgoCard extends HTMLElement {
     // Set up click handler
     const card = this.shadowRoot.querySelector("ha-card");
     card.onclick = (e) => {
-      const event = new Event("hass-more-info", {
+      const event = new Event("show-dialog", {
         bubbles: true,
         cancelable: false,
         composed: true,
       });
       event.detail = {
-        entityId: clickEntity,
-        moreInfoType: "ha-more-info-occupancy-calendar", // Specify custom component
+        dialogTag: "hui-dialog-occupancy-calendar",
+        dialogImport: () => import("./main"),
+        dialogParams: {
+          entity_id: this._config.clickEntity,
+          title: name, //  this.hass.states[clickEntity].attributes.friendly_name ||
+        },
       };
       this.dispatchEvent(event);
     };

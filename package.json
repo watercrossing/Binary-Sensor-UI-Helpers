@@ -1,7 +1,7 @@
 {
   "name": "binary-sensor-helpers",
   "private": true,
-  "version": "0.1",
+  "version": "0.2",
   "type": "module",
   "description": "",
   "scripts": {
@@ -27,6 +27,7 @@
     "typescript-eslint": "^8.18.2"
   },
   "dependencies": {
+    "@mdi/js": "^7.4.47",
     "date-fns": "^4.1.0",
     "lit": "^2.8.0"
   }

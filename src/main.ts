@@ -1,15 +1,14 @@
-// This is a custom Home assistant more-info element. It gets loaded for entities that have the `custom_ui_more_info` property set to `ha-more-info-occupancy-calendar`.
-// The standard history view is still loaded below. Ideally we would simply replace it, but I am not sure how/if that can be done!
-
-import { LitElement, html, css, PropertyValues } from "lit";
+import { LitElement, html, css, PropertyValues, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { fireEvent } from "./common/fire_event";
+import { mdiClose } from "@mdi/js";
 
 import * as packageJson from "../package.json";
 
 import { TimeAgoCard } from "./time-since-card";
 
 customElements.define("time-since-card", TimeAgoCard);
-
+/* eslint-disable @typescript-eslint/no-explicit-any */
 (window as any).customCards = (window as any).customCards || [];
 (window as any).customCards.push({
   type: "time-since-card",
@@ -25,78 +24,20 @@ console.info(
   "color: darkblue; background: white; font-weight: bold;",
 );
 
-// Replace date-fns functionality with native Date methods
-// Should probably use some HASS stuff for this, at least to get the timezone/locale right...
-const formatDate = (date: Date, format: string): string => {
-  if (format === "d") {
-    return date.getDate().toString();
-  }
-  const options: Intl.DateTimeFormatOptions = {
-    month: format.includes("MMMM") ? "long" : "short",
-    year: format.includes("yyyy") ? "numeric" : undefined,
-    day: format.includes("d") ? "numeric" : undefined,
-  };
-  return new Intl.DateTimeFormat("en-GB", options).format(date);
-};
-
-const startOfMonth = (date: Date): Date => {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-};
-
-const endOfMonth = (date: Date): Date => {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
-};
-
-const startOfDay = (date: Date): Date => {
-  const newDate = new Date(date);
-  newDate.setHours(0, 0, 0, 0);
-  return newDate;
-};
-
-const eachDayOfInterval = ({
-  start,
-  end,
-}: {
-  start: Date;
-  end: Date;
-}): Date[] => {
-  const days: Date[] = [];
-  const current = new Date(start);
-  while (current <= end) {
-    days.push(new Date(current));
-    current.setDate(current.getDate() + 1);
-  }
-  return days;
-};
-
-const isEqual = (date1: Date, date2: Date | undefined): boolean => {
-  if (!date2) return false;
-  return date1.getTime() === date2.getTime();
-};
-
-interface DayStats {
-  date: Date;
-  eventCount: number;
-  events: Array<{ timestamp: string; state: string }>;
-}
-
-@customElement("ha-more-info-occupancy-calendar")
-export class MoreInfoOccupancyCalendar extends LitElement {
-  /* eslint-disable @typescript-eslint/no-explicit-any */
+// Base calendar class that contains shared functionality
+class BaseOccupancyCalendar extends LitElement {
   @property({ attribute: false }) public hass!: any;
-  /* eslint-disable @typescript-eslint/no-explicit-any */
   @property({ attribute: true }) public stateObj!: any;
-  /* eslint-disable @typescript-eslint/no-explicit-any */
   @property({ attribute: false }) public entry?: any;
   @property({ attribute: false }) public editMode?: boolean;
 
-  @state() private _selectedDate: Date = startOfDay(new Date());
-  @state() private _currentMonth: Date = new Date();
-  @state() private _dayStats: DayStats[] = [];
-  @state() private _maxEvents: number = 0;
-  @state() private _hasRendered: boolean = false;
-  @state() private _isFetching: boolean = false;
-  private _disconnected: boolean = false;
+  @state() protected _selectedDate: Date = startOfDay(new Date());
+  @state() protected _currentMonth: Date = new Date();
+  @state() protected _dayStats: DayStats[] = [];
+  @state() protected _maxEvents: number = 0;
+  @state() protected _hasRendered: boolean = false;
+  @state() protected _isFetching: boolean = false;
+  protected _disconnected: boolean = false;
 
   connectedCallback() {
     super.connectedCallback();
@@ -109,8 +50,6 @@ export class MoreInfoOccupancyCalendar extends LitElement {
   }
 
   protected shouldUpdate(_changedProperties: PropertyValues): boolean {
-    // Update if: stateObj changed, not rendered yet, or selected date changed
-    // Only trigger fetch if stateObj changed or not rendered yet
     if (
       _changedProperties.has("stateObj") ||
       _changedProperties.has("_selectedDate") ||
@@ -118,13 +57,13 @@ export class MoreInfoOccupancyCalendar extends LitElement {
     ) {
       return !this._disconnected;
     }
+    return false;
   }
 
   protected willUpdate(changedProps: PropertyValues): void {
-    //console.log("calendar willUpdate global state:", this.stateObj, this.entry, this.editMode);
     if (
       (changedProps.has("stateObj") || !this._hasRendered) &&
-      this.stateObj.entity_id &&
+      this.stateObj?.entity_id &&
       !this._isFetching
     ) {
       this._fetchHistory();
@@ -183,18 +122,19 @@ export class MoreInfoOccupancyCalendar extends LitElement {
     }
   }
 
-  private _getColorIntensity(eventCount: number): string {
+  // Shared methods
+  protected _getColorIntensity(eventCount: number): string {
     if (eventCount === 0) return "var(--primary-background-color)";
     const intensity = Math.max(0.4, Math.min(1, eventCount / this._maxEvents));
     return `rgba(var(--rgb-primary-color), ${intensity})`;
   }
 
-  private _handleDateClick(date: Date) {
+  protected _handleDateClick(date: Date) {
     this._selectedDate = date;
     this.requestUpdate();
   }
 
-  private _previousMonth() {
+  protected _previousMonth() {
     this._currentMonth = new Date(
       this._currentMonth.getFullYear(),
       this._currentMonth.getMonth() - 1,
@@ -205,7 +145,7 @@ export class MoreInfoOccupancyCalendar extends LitElement {
     this._fetchHistory();
   }
 
-  private _nextMonth() {
+  protected _nextMonth() {
     this._currentMonth = new Date(
       this._currentMonth.getFullYear(),
       this._currentMonth.getMonth() + 1,
@@ -216,7 +156,7 @@ export class MoreInfoOccupancyCalendar extends LitElement {
     this._fetchHistory();
   }
 
-  private _renderEventList(date: Date) {
+  protected _renderEventList(date: Date) {
     const dayData = this._dayStats.find((day) => isEqual(day.date, date));
     if (!dayData || dayData.events.length === 0) {
       return html`<div class="no-events">No events on this day</div>`;
@@ -247,8 +187,8 @@ export class MoreInfoOccupancyCalendar extends LitElement {
     `;
   }
 
-  protected render() {
-    if (!this.stateObj || this._dayStats.length == 0) {
+  protected _renderCalendar() {
+    if (!this.stateObj || this._dayStats.length === 0) {
       return html``;
     }
 
@@ -258,173 +198,352 @@ export class MoreInfoOccupancyCalendar extends LitElement {
     const monthStart = startOfMonth(this._currentMonth);
     const monthName = formatDate(this._currentMonth, "MMMM yyyy");
 
-    // Calculate empty cells needed at start of month
-    const startDayOffset = monthStart.getDay(); // 0 for Sunday, 1 for Monday, etc.
+    const startDayOffset = monthStart.getDay();
     const emptyCells = Array((startDayOffset + 6) % 7).fill(null);
 
     return html`
-      <ha-card>
-        <div class="calendar-header">
-          <md-filled-button @click=${this._previousMonth}>
-            <ha-icon icon="mdi:chevron-left"></ha-icon>
-          </md-filled-button>
-          <span>${monthName}</span>
-          <md-filled-button @click=${this._nextMonth}>
-            <ha-icon icon="mdi:chevron-right"></ha-icon>
-          </md-filled-button>
+      <div class="calendar-header">
+        <md-filled-button @click=${this._previousMonth}>
+          <ha-icon icon="mdi:chevron-left"></ha-icon>
+        </md-filled-button>
+        <span>${monthName}</span>
+        <md-filled-button @click=${this._nextMonth}>
+          <ha-icon icon="mdi:chevron-right"></ha-icon>
+        </md-filled-button>
+      </div>
+      <div class="calendar">
+        <div class="weekday-header">
+          ${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
+            (day) => html`<div class="weekday">${day}</div>`,
+          )}
         </div>
-        <div class="calendar">
-          <div class="weekday-header">
-            ${["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
-              (day) => html`<div class="weekday">${day}</div>`,
-            )}
-          </div>
-          <div class="days">
-            ${emptyCells.map(() => html` <div class="day empty"></div> `)}
-            ${days.map(
-              ({ date, eventCount }) => html`
-                <div
-                  class="day ${isEqual(date, this._selectedDate)
-                    ? "selected"
-                    : ""}"
-                  style="background-color: ${this._getColorIntensity(
-                    eventCount,
-                  )}"
-                  @click=${() => this._handleDateClick(date)}
-                >
-                  ${formatDate(date, "d")}
-                  ${eventCount > 0
-                    ? html`<div class="event-indicator"></div>`
-                    : ""}
-                </div>
-              `,
-            )}
-          </div>
+        <div class="days">
+          ${emptyCells.map(() => html` <div class="day empty"></div> `)}
+          ${days.map(
+            ({ date, eventCount }) => html`
+              <div
+                class="day ${isEqual(date, this._selectedDate)
+                  ? "selected"
+                  : ""}"
+                style="background-color: ${this._getColorIntensity(eventCount)}"
+                @click=${() => this._handleDateClick(date)}
+              >
+                ${formatDate(date, "d")}
+                ${eventCount > 0
+                  ? html`<div class="event-indicator"></div>`
+                  : ""}
+              </div>
+            `,
+          )}
         </div>
-        ${this._selectedDate ? this._renderEventList(this._selectedDate) : ""}
-      </ha-card>
+      </div>
+      ${this._selectedDate ? this._renderEventList(this._selectedDate) : ""}
     `;
   }
 
-  static styles = css`
-    :host {
-      display: block;
+  static styles = [
+    css`
+      ha-dialog {
+        --mdc-dialog-min-width: 300px;
+        --mdc-dialog-max-width: 500px;
+        --mdc-dialog-heading-ink-color: var(--primary-text-color);
+        --mdc-dialog-content-ink-color: var(--primary-text-color);
+        --justify-action-buttons: space-between;
+        --dialog-content-padding: 8px;
+      }
+      ha-dialog .form {
+        color: var(--primary-text-color);
+      }
+      a {
+        color: var(--primary-color);
+      }
+      /* make dialog fullscreen on small screens */
+      @media all and (max-width: 450px), all and (max-height: 500px) {
+        ha-dialog {
+          --mdc-dialog-min-width: calc(
+            100vw - env(safe-area-inset-right) - env(safe-area-inset-left)
+          );
+          --mdc-dialog-max-width: calc(
+            100vw - env(safe-area-inset-right) - env(safe-area-inset-left)
+          );
+          --mdc-dialog-min-height: 100%;
+          --mdc-dialog-max-height: 100%;
+          --vertical-align-dialog: flex-end;
+          --ha-dialog-border-radius: 0px;
+        }
+      }
+      mwc-button.warning {
+        --mdc-theme-primary: var(--error-color);
+      }
+      .error {
+        color: var(--error-color);
+      }
+      ha-dialog {
+        --dialog-surface-position: static;
+        --dialog-content-position: static;
+        --vertical-align-dialog: flex-start;
+      }
+      .content {
+        outline: none;
+      }
+      .heading {
+        border-bottom: 1px solid
+          var(--mdc-dialog-scroll-divider-color, rgba(0, 0, 0, 0.12));
+      }
+      :host([tab="time"]) ha-dialog {
+        --dialog-content-padding: 0px;
+      }
+      @media all and (min-width: 600px) and (min-height: 501px) {
+        ha-dialog {
+          --mdc-dialog-min-width: 560px;
+          --mdc-dialog-max-width: 580px;
+          --dialog-surface-margin-top: 40px;
+          --mdc-dialog-max-height: calc(100% - 72px);
+        }
+        :host([large]) ha-dialog {
+          --mdc-dialog-min-width: 90vw;
+          --mdc-dialog-max-width: 90vw;
+        }
+      }
+      mwc-tab[disabled] {
+        --mdc-tab-text-label-color-default: var(--material-disabled-text-color);
+        pointer-events: none;
+      }
+    `,
+    css`
+      :host {
+        display: block;
+      }
+
+      ha-card {
+        padding: 16px;
+      }
+
+      .calendar-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+
+      .calendar-header md-filled-button {
+        min-width: 48px;
+        height: 48px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 24px;
+        transition: background-color 0.2s;
+      }
+
+      .calendar-header md-filled-button:hover {
+        background-color: var(--primary-color);
+      }
+
+      .calendar-header md-filled-button ha-icon {
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .weekday-header {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 8px;
+      }
+
+      .days {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 4px;
+      }
+
+      .day {
+        position: relative;
+        padding: 8px;
+        text-align: center;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+      }
+
+      .day:hover {
+        background-color: var(--primary-color);
+        color: var(--text-primary-color);
+      }
+
+      .day.selected {
+        border: 2px solid var(--primary-color);
+      }
+
+      .day.empty {
+        background-color: transparent;
+        cursor: default;
+      }
+
+      .day.empty:hover {
+        background-color: transparent;
+      }
+
+      .event-indicator {
+        position: absolute;
+        bottom: 2px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background-color: var(--primary-color);
+      }
+
+      .event-list {
+        margin-top: 16px;
+        border-top: 1px solid var(--divider-color);
+        padding-top: 16px;
+      }
+
+      .event-list table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .event-list th,
+      .event-list td {
+        padding: 8px;
+        text-align: left;
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .no-events {
+        margin-top: 16px;
+        text-align: center;
+        color: var(--secondary-text-color);
+      }
+
+      .header_title {
+        display: flex;
+        align-items: center;
+      }
+
+      .header_title span {
+        margin-left: 8px;
+      }
+    `,
+  ];
+}
+
+// More Info Card version
+@customElement("ha-more-info-occupancy-calendar")
+export class MoreInfoOccupancyCalendar extends BaseOccupancyCalendar {
+  protected render() {
+    return html` <ha-card> ${this._renderCalendar()} </ha-card> `;
+  }
+}
+
+// Dialog version
+@customElement("hui-dialog-occupancy-calendar")
+export class HuiDialogOccupancyCalendar extends BaseOccupancyCalendar {
+  public showDialog(params: any): void {
+    this.stateObj = params;
+  }
+
+  public closeDialog() {
+    this.stateObj = undefined;
+    fireEvent(this, "dialog-closed", { dialog: this.localName });
+  }
+
+  protected render() {
+    if (!this.stateObj) {
+      return nothing;
     }
 
-    ha-card {
-      padding: 16px;
-    }
+    return html`
+      <ha-dialog open @closed=${this.closeDialog} .heading=${true} hideActions>
+        <ha-dialog-header slot="heading">
+          <ha-icon-button
+            slot="navigationIcon"
+            dialogAction="cancel"
+            .label=${this.hass?.localize(
+              "ui.dialogs.more_info_control.dismiss",
+            ) ?? "Dismiss"}
+            .path=${mdiClose}
+          ></ha-icon-button>
+          <span slot="title">
+            ${this.stateObj.title || "Occupancy Calendar"}
+          </span>
+        </ha-dialog-header>
+        ${this._renderCalendar()}
+      </ha-dialog>
+    `;
+  }
+}
 
-    .calendar-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-    }
+// Helper functions (unchanged)
+const formatDate = (date: Date, format: string): string => {
+  if (format === "d") {
+    return date.getDate().toString();
+  }
+  const options: Intl.DateTimeFormatOptions = {
+    month: format.includes("MMMM") ? "long" : "short",
+    year: format.includes("yyyy") ? "numeric" : undefined,
+    day: format.includes("d") ? "numeric" : undefined,
+  };
+  return new Intl.DateTimeFormat("en-GB", options).format(date);
+};
 
-    .calendar-header md-filled-button {
-      min-width: 48px;
-      height: 48px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 24px;
-      transition: background-color 0.2s;
-    }
+const startOfMonth = (date: Date): Date => {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+};
 
-    .calendar-header md-filled-button:hover {
-      background-color: var(--primary-color);
-    }
+const endOfMonth = (date: Date): Date => {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+};
 
-    .calendar-header md-filled-button ha-icon {
-      width: 24px;
-      height: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+const startOfDay = (date: Date): Date => {
+  const newDate = new Date(date);
+  newDate.setHours(0, 0, 0, 0);
+  return newDate;
+};
 
-    .weekday-header {
-      display: grid;
-      grid-template-columns: repeat(7, 1fr);
-      text-align: center;
-      font-weight: bold;
-      margin-bottom: 8px;
-    }
+const eachDayOfInterval = ({
+  start,
+  end,
+}: {
+  start: Date;
+  end: Date;
+}): Date[] => {
+  const days: Date[] = [];
+  const current = new Date(start);
+  while (current <= end) {
+    days.push(new Date(current));
+    current.setDate(current.getDate() + 1);
+  }
+  return days;
+};
 
-    .days {
-      display: grid;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 4px;
-    }
+const isEqual = (date1: Date, date2: Date | undefined): boolean => {
+  if (!date2) return false;
+  return date1.getTime() === date2.getTime();
+};
 
-    .day {
-      position: relative;
-      padding: 8px;
-      text-align: center;
-      cursor: pointer;
-      border-radius: 4px;
-      transition: background-color 0.2s;
-    }
-
-    .day:hover {
-      background-color: var(--primary-color);
-      color: var(--text-primary-color);
-    }
-
-    .day.selected {
-      border: 2px solid var(--primary-color);
-    }
-
-    .day.empty {
-      background-color: transparent;
-      cursor: default;
-    }
-
-    .day.empty:hover {
-      background-color: transparent;
-    }
-
-    .event-indicator {
-      position: absolute;
-      bottom: 2px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 4px;
-      height: 4px;
-      border-radius: 50%;
-      background-color: var(--primary-color);
-    }
-
-    .event-list {
-      margin-top: 16px;
-      border-top: 1px solid var(--divider-color);
-      padding-top: 16px;
-    }
-
-    .event-list table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-
-    .event-list th,
-    .event-list td {
-      padding: 8px;
-      text-align: left;
-      border-bottom: 1px solid var(--divider-color);
-    }
-
-    .no-events {
-      margin-top: 16px;
-      text-align: center;
-      color: var(--secondary-text-color);
-    }
-  `;
+interface DayStats {
+  date: Date;
+  eventCount: number;
+  events: Array<{ timestamp: string; state: string }>;
 }
 
 declare global {
+  interface HASSDomEvents {
+    "dialog-closed": { dialog: string };
+  }
+
   interface HTMLElementTagNameMap {
     "ha-more-info-occupancy-calendar": MoreInfoOccupancyCalendar;
+    "hui-dialog-occupancy-calendar": HuiDialogOccupancyCalendar;
   }
 }
